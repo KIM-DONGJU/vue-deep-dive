@@ -6,13 +6,14 @@
 
 # Reactivity API
 ### ref
-```
+```ts
 export function ref(value?: unknown) {
   return createRef(value, false)
 }
 ```
+
 ### createRef
-```
+```ts
 function createRef(rawValue: unknown, shallow: boolean) {
   if (isRef(rawValue)) {
     return rawValue
@@ -20,14 +21,18 @@ function createRef(rawValue: unknown, shallow: boolean) {
   return new RefImpl(rawValue, shallow)
 }
 ```
+- `rawValue`가 이미 `Ref` 타입의 값일 경우에는 `rawValue`를 그대로 return 한다.  <br/> 그렇지 않다면 `RefImpl` class를 통해 초기화된 새로운 ref 객체를 return 한다.
+
 ### isRef
-```
+```ts
 export function isRef(r: any): r is Ref {
   return !!(r && r.__v_isRef === true)
 }
 ```
+- Vue에서는 `ref`를 생성할 때 내부적으로 `__v_isRef`라는 키를 사용하여 값이 `ref`인지 여부를 관리한다. `isRef` 함수는 이 키에 접근하여, 인자로 받은 `r`이 `ref`인지 판단한다.
+
 ### RefImpl
-```
+```ts
 class RefImpl<T> {
   private _value: T
   private _rawValue: T
@@ -61,10 +66,110 @@ class RefImpl<T> {
   }
 }
 ```
+
 ### toRaw
-```
+```ts
 export function toRaw<T>(observed: T): T {
   const raw = observed && (observed as Target)[ReactiveFlags.RAW]
   return raw ? toRaw(raw) : observed
+}
+```
+
+### toReactive
+```ts
+/**
+ * Returns a reactive proxy of the given value (if possible).
+ *
+ * If the given value is not an object, the original value itself is returned.
+ *
+ * @param value - The value for which a reactive proxy shall be created.
+ */
+export const toReactive = <T extends unknown>(value: T): T =>
+  isObject(value) ? reactive(value) : value
+```
+
+### reactive
+```ts
+/**
+ * Returns a reactive proxy of the object.
+ *
+ * The reactive conversion is "deep": it affects all nested properties. A
+ * reactive object also deeply unwraps any properties that are refs while
+ * maintaining reactivity.
+ *
+ * @example
+ * ```js
+ * const obj = reactive({ count: 0 })
+ * ```
+ *
+ * @param target - The source object.
+ * @see {@link https://vuejs.org/api/reactivity-core.html#reactive}
+ */
+export function reactive<T extends object>(target: T): Reactive<T>
+export function reactive(target: object) {
+  // if trying to observe a readonly proxy, return the readonly version.
+  if (isReadonly(target)) {
+    return target
+  }
+  return createReactiveObject(
+    target,
+    false,
+    mutableHandlers,
+    mutableCollectionHandlers,
+    reactiveMap,
+  )
+}
+```
+
+### isReadonly
+```ts
+export function isReadonly(value: unknown): boolean {
+  return !!(value && (value as Target)[ReactiveFlags.IS_READONLY])
+}
+```
+
+### createReactiveObject
+```ts
+function createReactiveObject(
+  target: Target,
+  isReadonly: boolean,
+  baseHandlers: ProxyHandler<any>,
+  collectionHandlers: ProxyHandler<any>,
+  proxyMap: WeakMap<Target, any>,
+) {
+  if (!isObject(target)) {
+    if (__DEV__) {
+      warn(
+        `value cannot be made ${isReadonly ? 'readonly' : 'reactive'}: ${String(
+          target,
+        )}`,
+      )
+    }
+    return target
+  }
+  // target is already a Proxy, return it.
+  // exception: calling readonly() on a reactive object
+  if (
+    target[ReactiveFlags.RAW] &&
+    !(isReadonly && target[ReactiveFlags.IS_REACTIVE])
+  ) {
+    return target
+  }
+  // target already has corresponding Proxy
+  const existingProxy = proxyMap.get(target)
+  if (existingProxy) {
+    return existingProxy
+  }
+  // only specific value types can be observed.
+  const targetType = getTargetType(target)
+  if (targetType === TargetType.INVALID) {
+    return target
+  }
+  const proxy = new Proxy(
+    target,
+    targetType === TargetType.COLLECTION ? collectionHandlers : baseHandlers,
+  )
+  proxyMap.set(target, proxy)
+  return proxy
 }
 ```
