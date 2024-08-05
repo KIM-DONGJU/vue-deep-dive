@@ -19,7 +19,7 @@ function createRef(rawValue: unknown, shallow: boolean) {
     return rawValue
   }
   return new RefImpl(rawValue, shallow)
-}
+} 
 ```
 - `rawValue`가 이미 `Ref` 타입의 값일 경우에는 `rawValue`를 그대로 return 한다.  <br/> 그렇지 않다면 `RefImpl` class를 통해 초기화된 새로운 ref 객체를 return 한다.
 
@@ -64,6 +64,129 @@ class RefImpl<T> {
       triggerRefValue(this, DirtyLevels.Dirty, newVal, oldVal)
     }
   }
+}
+```
+- ref값에 접근할 때 trackRefValue를 통해 의존성 등록이 필요한 경우 등록한다.
+- set을 통해 해당 값이 변경되면 triggerRefValue를 통해 반응형 업데이트, watchEffect, watch 로직 실행 등의 동작을 한다.
+
+### trackRefValue
+```ts
+export function trackRefValue(ref: RefBase<any>) {
+  if (shouldTrack && activeEffect) {
+    ref = toRaw(ref)
+    trackEffect(
+      activeEffect,
+      (ref.dep ??= createDep(
+        () => (ref.dep = undefined),
+        ref instanceof ComputedRefImpl ? ref : undefined,
+      )),
+      __DEV__
+        ? {
+            target: ref,
+            type: TrackOpTypes.GET,
+            key: 'value',
+          }
+        : void 0,
+    )
+  }
+}
+```
+- ref 값의 .value에 접근했을 때(get) `watch`, `watchEffect`, `computed` 등 `trigger`를 위한 의존성 등록이 필요한 경우 의존성 등록을 한다. console.log(.value) 등 값이 변경되었을 때 trigger가 필요하지 않은 경우에는 따로 의존성을 등록하지 않는다.
+
+### trackEffect
+```ts
+export function trackEffect(
+  effect: ReactiveEffect,
+  dep: Dep,
+  debuggerEventExtraInfo?: DebuggerEventExtraInfo,
+) {
+  if (dep.get(effect) !== effect._trackId) {
+    dep.set(effect, effect._trackId)
+    const oldDep = effect.deps[effect._depsLength]
+    if (oldDep !== dep) {
+      if (oldDep) {
+        cleanupDepEffect(oldDep, effect)
+      }
+      effect.deps[effect._depsLength++] = dep
+    } else {
+      effect._depsLength++
+    }
+    if (__DEV__) {
+      // eslint-disable-next-line no-restricted-syntax
+      effect.onTrack?.(extend({ effect }, debuggerEventExtraInfo!))
+    }
+  }
+}
+```
+- 의존성 추가 및 해당 값이 필요없어질 경우 가비지 컬렉터에서 제거되기 위한 cleanupDepEffect 등록하는 과정
+
+### triggerRefValue
+```ts
+export function triggerRefValue(
+  ref: RefBase<any>,
+  dirtyLevel: DirtyLevels = DirtyLevels.Dirty,
+  newVal?: any,
+  oldVal?: any,
+) {
+  ref = toRaw(ref)
+  const dep = ref.dep
+  if (dep) {
+    triggerEffects(
+      dep,
+      dirtyLevel,
+      __DEV__
+        ? {
+            target: ref,
+            type: TriggerOpTypes.SET,
+            key: 'value',
+            newValue: newVal,
+            oldValue: oldVal,
+          }
+        : void 0,
+    )
+  }
+}
+```
+
+### triggerEffects
+```ts
+export function triggerEffects(
+  dep: Dep,
+  dirtyLevel: DirtyLevels,
+  debuggerEventExtraInfo?: DebuggerEventExtraInfo,
+) {
+  pauseScheduling()
+  for (const effect of dep.keys()) {
+    // dep.get(effect) is very expensive, we need to calculate it lazily and reuse the result
+    let tracking: boolean | undefined
+    if (
+      effect._dirtyLevel < dirtyLevel &&
+      (tracking ??= dep.get(effect) === effect._trackId)
+    ) {
+      effect._shouldSchedule ||= effect._dirtyLevel === DirtyLevels.NotDirty
+      effect._dirtyLevel = dirtyLevel
+    }
+    if (
+      effect._shouldSchedule &&
+      (tracking ??= dep.get(effect) === effect._trackId)
+    ) {
+      if (__DEV__) {
+        // eslint-disable-next-line no-restricted-syntax
+        effect.onTrigger?.(extend({ effect }, debuggerEventExtraInfo))
+      }
+      effect.trigger()
+      if (
+        (!effect._runnings || effect.allowRecurse) &&
+        effect._dirtyLevel !== DirtyLevels.MaybeDirty_ComputedSideEffect
+      ) {
+        effect._shouldSchedule = false
+        if (effect.scheduler) {
+          queueEffectSchedulers.push(effect.scheduler)
+        }
+      }
+    }
+  }
+  resetScheduling()
 }
 ```
 
