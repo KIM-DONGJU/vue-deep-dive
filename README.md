@@ -155,15 +155,15 @@ export function triggerEffects(
   dirtyLevel: DirtyLevels,
   debuggerEventExtraInfo?: DebuggerEventExtraInfo,
 ) {
-  pauseScheduling()
+  pauseScheduling() // pauseScheduling을 통해 동시에 다른 반응형 업데이트 작업이 불필요하게 여러번 업데이트 되지 않도록 하는 안전장치 (무한루프나 불필요한 반응형 업데이트 방지)
   for (const effect of dep.keys()) {
     // dep.get(effect) is very expensive, we need to calculate it lazily and reuse the result
     let tracking: boolean | undefined
     if (
-      effect._dirtyLevel < dirtyLevel &&
-      (tracking ??= dep.get(effect) === effect._trackId)
+      effect._dirtyLevel < dirtyLevel && // 이펙트가 실제 갱신이 필요한 이펙트인지 판단
+      (tracking ??= dep.get(effect) === effect._trackId) // dep.get이 비용이 높은 연산이라 실제 갱신이 필요한 이펙트이면서 tracking이 undefined일 때만 연산이 수행되도록 하고, 해당 값이 effect._trackId와 일치하는지(올바른 종속성에 의해 트래킹되고 있는지) 판단하여 아래 작업 실행
     ) {
-      effect._shouldSchedule ||= effect._dirtyLevel === DirtyLevels.NotDirty
+      effect._shouldSchedule ||= effect._dirtyLevel === DirtyLevels.NotDirty // 위 조건들로 인하여 스케줄링이 필요한(업데이트가 필요한) effect인데도 불구하고 shouldSchedule이 false면서 effect._dirtyLevel이 NotDirty인 경우 스케줄링을 설정
       effect._dirtyLevel = dirtyLevel
     }
     if (
@@ -176,11 +176,12 @@ export function triggerEffects(
       }
       effect.trigger()
       if (
-        (!effect._runnings || effect.allowRecurse) &&
+        (!effect._runnings || effect.allowRecurse) && // 이펙트가 실행중이지 않거나 재귀적으로 허용이 되는지 확인 -> 따로 체크 필요
         effect._dirtyLevel !== DirtyLevels.MaybeDirty_ComputedSideEffect
       ) {
-        effect._shouldSchedule = false
+        effect._shouldSchedule = false // 이펙트가 더 이상 스케줄링 되지 않도록 설정
         if (effect.scheduler) {
+          // 이펙트가 특정 스케줄러를 가지고 있다면 queueEffectSchedulers 큐에 추가하여 별도로 관리
           queueEffectSchedulers.push(effect.scheduler)
         }
       }
