@@ -211,6 +211,8 @@ export function toRaw<T>(observed: T): T {
 export const toReactive = <T extends unknown>(value: T): T =>
   isObject(value) ? reactive(value) : value
 ```
+- 객체 형태의 값을 value로 받으면 반응성을 부여하여 반환하고 그렇지 않으면 원본 값을 반환
+- vue 공식 사이트에서도 소개되지 않는데 어떠한 용도로 사용되는건지 확인 필요
 
 ### reactive
 ```ts
